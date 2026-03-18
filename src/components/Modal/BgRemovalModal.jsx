@@ -42,7 +42,10 @@ export default function BgRemovalModal() {
 
     try {
       if (!segmenter) {
-        const { AutoModel, AutoProcessor, RawImage } = await import('@huggingface/transformers');
+        const { AutoModel, AutoProcessor, RawImage, env } = await import('@huggingface/transformers');
+
+        env.allowLocalModels = false;
+        env.useBrowserCache = true;
 
         setProgressWidth('20%');
         setStatusText('Downloading model...');
@@ -113,8 +116,9 @@ export default function BgRemovalModal() {
       setProgressWidth('100%');
       setStatusText('Done! Background removed.');
     } catch (err) {
-      setStatusText('Error: ' + err.message);
-      console.error(err);
+      const msg = err.message || String(err);
+      setStatusText('Error: ' + msg);
+      console.error('BG Removal Error:', err, err.stack);
       setCanProcess(true);
     }
     setProcessing(false);
