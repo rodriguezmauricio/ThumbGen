@@ -41,6 +41,8 @@ export default function BgRemovalModal() {
       setStatusText('Processing image...');
 
       const blob = await removeBackground(file, {
+        model: 'isnet',
+        output: { format: 'image/png', quality: 1 },
         progress: (key, current, total) => {
           if (total > 0) {
             const pct = 30 + (current / total) * 60;
