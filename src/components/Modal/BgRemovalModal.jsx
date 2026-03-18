@@ -51,7 +51,7 @@ export default function BgRemovalModal() {
         setStatusText('Downloading model...');
 
         const model = await AutoModel.from_pretrained('briaai/RMBG-1.4', {
-          dtype: 'fp32',
+          quantized: true,
         });
         const processor = await AutoProcessor.from_pretrained('briaai/RMBG-1.4');
 
