@@ -1,7 +1,8 @@
 import { useState, useRef } from 'react';
-import { removeBackground } from '@imgly/background-removal';
-import { useAppState, useDispatch, newId } from '../../store/state';
+import { useAppState, useDispatch } from '../../store/state';
 import { fitImageToCanvas } from '../../utils/export';
+
+let segmenter = null;
 
 export default function BgRemovalModal() {
   const state = useAppState();
@@ -17,6 +18,7 @@ export default function BgRemovalModal() {
   const [fileName, setFileName] = useState('');
   const fileRef = useRef(null);
   const blobRef = useRef(null);
+
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -35,28 +37,78 @@ export default function BgRemovalModal() {
 
     setProcessing(true);
     setProgressWidth('10%');
-    setStatusText('Loading AI model (first time ~40MB download)...');
+    setStatusText('Loading AI model (first time ~45MB download)...');
     setCanProcess(false);
 
     try {
-      setProgressWidth('30%');
+      if (!segmenter) {
+        const { AutoModel, AutoProcessor, RawImage } = await import('@huggingface/transformers');
+
+        setProgressWidth('20%');
+        setStatusText('Downloading model...');
+
+        const model = await AutoModel.from_pretrained('briaai/RMBG-1.4', {
+          dtype: 'fp32',
+        });
+        const processor = await AutoProcessor.from_pretrained('briaai/RMBG-1.4');
+
+        segmenter = { model, processor, RawImage };
+      }
+
+      setProgressWidth('40%');
       setStatusText('Processing image...');
 
-      const blob = await removeBackground(file, {
-        model: 'isnet_fp16',
-        output: { format: 'image/png', quality: 1 },
-        progress: (key, current, total) => {
-          if (total > 0) {
-            const pct = 30 + (current / total) * 60;
-            setProgressWidth(pct + '%');
-          }
-          setStatusText(`Processing: ${key}...`);
-        }
+      const { model, processor, RawImage } = segmenter;
+
+      // Load image
+      const imageUrl = URL.createObjectURL(file);
+      const image = await RawImage.fromURL(imageUrl);
+
+      setProgressWidth('50%');
+
+      // Process through model
+      const { pixel_values } = await processor(image);
+      const { output } = await model({ input: pixel_values });
+
+      setProgressWidth('70%');
+      setStatusText('Generating mask...');
+
+      // Get mask and resize to original image dimensions
+      const maskData = output[0][0];
+      const maskImage = RawImage.fromTensor(maskData);
+      const resizedMask = await maskImage.resize(image.width, image.height);
+
+      setProgressWidth('85%');
+      setStatusText('Applying mask...');
+
+      // Create output canvas with transparency
+      const canvas = document.createElement('canvas');
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const ctx = canvas.getContext('2d');
+
+      // Draw original image
+      const imgEl = new Image();
+      await new Promise((resolve) => {
+        imgEl.onload = resolve;
+        imgEl.src = imageUrl;
       });
+      ctx.drawImage(imgEl, 0, 0);
+
+      // Apply mask as alpha channel
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const pixels = imageData.data;
+      for (let i = 0; i < resizedMask.data.length; i++) {
+        pixels[i * 4 + 3] = resizedMask.data[i]; // Set alpha from mask
+      }
+      ctx.putImageData(imageData, 0, 0);
+
+      // Convert to blob
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
 
       blobRef.current = blob;
-      const url = URL.createObjectURL(blob);
-      setResultSrc(url);
+      const resultUrl = URL.createObjectURL(blob);
+      setResultSrc(resultUrl);
       setCanAdd(true);
       setProgressWidth('100%');
       setStatusText('Done! Background removed.');
@@ -87,18 +139,16 @@ export default function BgRemovalModal() {
 
   return (
     <>
-      {/* Floating button */}
       <button className="floating-btn" title="Remove Background Tool" onClick={() => setVisible(true)}>
         &#9986; Remove BG
       </button>
 
-      {/* Modal */}
       {visible && (
         <div className="modal">
           <div className="modal-content">
             <h2>Remove Background</h2>
             <p>Upload an image to remove its background (runs locally in browser, 100% free).</p>
-            <p className="note">First use downloads a ~40MB AI model (cached afterwards).</p>
+            <p className="note">First use downloads a ~45MB AI model (cached afterwards).</p>
             <input ref={fileRef} type="file" accept="image/*" onChange={handleFileChange} style={{ display: 'none' }} />
             <button className="btn-secondary" style={{ marginTop: 8 }} onClick={() => fileRef.current?.click()}>
               Choose Image...
