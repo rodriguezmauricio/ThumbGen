@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { removeBackground, subscribeToProgress } from 'rembg-webgpu';
+import { removeBackground } from '@imgly/background-removal';
 import { useAppState, useDispatch } from '../../store/state';
 import { fitImageToCanvas } from '../../utils/export';
 
@@ -30,38 +30,129 @@ export default function BgRemovalModal() {
     blobRef.current = null;
   };
 
+  // Create a variant of the image with modified colors to help the model
+  const createVariant = (file, filter) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.filter = filter;
+        ctx.drawImage(img, 0, 0);
+        canvas.toBlob((blob) => resolve(blob), 'image/png');
+      };
+      img.src = URL.createObjectURL(file);
+    });
+  };
+
+  // Extract alpha channel from a processed blob
+  const getAlpha = (blob) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const alpha = new Uint8Array(canvas.width * canvas.height);
+        for (let i = 0; i < alpha.length; i++) {
+          alpha[i] = data.data[i * 4 + 3];
+        }
+        resolve({ alpha, width: canvas.width, height: canvas.height });
+      };
+      img.src = URL.createObjectURL(blob);
+    });
+  };
+
   const processRemoval = async () => {
     const file = fileRef.current?.files[0];
     if (!file) return;
 
     setProcessing(true);
     setProgressWidth('5%');
-    setStatusText('Initializing...');
+    setStatusText('Loading AI model...');
     setCanProcess(false);
 
-    const unsubscribe = subscribeToProgress(({ phase, progress }) => {
-      if (phase === 'downloading') {
-        setProgressWidth(Math.max(5, progress * 0.6) + '%');
-        setStatusText(`Downloading model... ${Math.round(progress)}%`);
-      } else if (phase === 'building') {
-        setProgressWidth((60 + progress * 0.2) + '%');
-        setStatusText('Building model...');
-      } else if (phase === 'ready') {
-        setProgressWidth('80%');
-        setStatusText('Processing image...');
-      }
-    });
-
     try {
-      const imageUrl = URL.createObjectURL(file);
-      const result = await removeBackground(imageUrl);
+      const runRemoval = (input) => removeBackground(input, {
+        model: 'isnet_fp16',
+        output: { format: 'image/png', quality: 1 },
+      });
 
-      // result has blobUrl and previewUrl
-      const response = await fetch(result.blobUrl);
-      const blob = await response.blob();
+      // Pass 1: Original image
+      setStatusText('Pass 1/3: Processing original...');
+      setProgressWidth('10%');
+      const result1 = await runRemoval(file);
+      const mask1 = await getAlpha(result1);
 
-      blobRef.current = blob;
-      setResultSrc(result.blobUrl);
+      // Pass 2: Brightened version (helps with dark subjects)
+      setStatusText('Pass 2/3: Processing brightened variant...');
+      setProgressWidth('40%');
+      const bright = await createVariant(file, 'brightness(2) contrast(1.3)');
+      const result2 = await runRemoval(bright);
+      const mask2 = await getAlpha(result2);
+
+      // Pass 3: Inverted brightness (helps with light subjects on light bg)
+      setStatusText('Pass 3/3: Processing high-contrast variant...');
+      setProgressWidth('65%');
+      const contrast = await createVariant(file, 'contrast(2) saturate(1.5)');
+      const result3 = await runRemoval(contrast);
+      const mask3 = await getAlpha(result3);
+
+      setStatusText('Combining masks...');
+      setProgressWidth('85%');
+
+      // Combine masks: take the MAX alpha from all passes (union of foregrounds)
+      // This ensures that anything detected as foreground in ANY pass is kept
+      const finalAlpha = new Uint8Array(mask1.alpha.length);
+      for (let i = 0; i < finalAlpha.length; i++) {
+        finalAlpha[i] = Math.max(mask1.alpha[i], mask2.alpha[i], mask3.alpha[i]);
+      }
+
+      // Apply combined mask to original image
+      const origImg = new Image();
+      await new Promise((resolve) => {
+        origImg.onload = resolve;
+        origImg.src = URL.createObjectURL(file);
+      });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = origImg.width;
+      canvas.height = origImg.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(origImg, 0, 0);
+
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+      // Handle size mismatch between mask and original
+      if (mask1.width === canvas.width && mask1.height === canvas.height) {
+        for (let i = 0; i < finalAlpha.length; i++) {
+          imageData.data[i * 4 + 3] = finalAlpha[i];
+        }
+      } else {
+        // Scale mask to fit original dimensions
+        const scaleX = mask1.width / canvas.width;
+        const scaleY = mask1.height / canvas.height;
+        for (let y = 0; y < canvas.height; y++) {
+          for (let x = 0; x < canvas.width; x++) {
+            const srcX = Math.min(Math.floor(x * scaleX), mask1.width - 1);
+            const srcY = Math.min(Math.floor(y * scaleY), mask1.height - 1);
+            const srcIdx = srcY * mask1.width + srcX;
+            const dstIdx = y * canvas.width + x;
+            imageData.data[dstIdx * 4 + 3] = finalAlpha[srcIdx];
+          }
+        }
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+
+      const finalBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+      blobRef.current = finalBlob;
+      setResultSrc(URL.createObjectURL(finalBlob));
       setCanAdd(true);
       setProgressWidth('100%');
       setStatusText('Done! Background removed.');
@@ -71,8 +162,6 @@ export default function BgRemovalModal() {
       console.error('BG Removal Error:', err);
       setCanProcess(true);
     }
-
-    unsubscribe();
     setProcessing(false);
   };
 
@@ -104,7 +193,7 @@ export default function BgRemovalModal() {
           <div className="modal-content">
             <h2>Remove Background</h2>
             <p>Upload an image to remove its background (runs locally in browser, 100% free).</p>
-            <p className="note">First use downloads a model (cached afterwards).</p>
+            <p className="note">First use downloads a ~40MB AI model (cached afterwards). Uses 3-pass processing for best results.</p>
             <input ref={fileRef} type="file" accept="image/*" onChange={handleFileChange} style={{ display: 'none' }} />
             <button className="btn-secondary" style={{ marginTop: 8 }} onClick={() => fileRef.current?.click()}>
               Choose Image...
