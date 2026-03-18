@@ -2,8 +2,6 @@ import { useState, useRef } from 'react';
 import { useAppState, useDispatch } from '../../store/state';
 import { fitImageToCanvas } from '../../utils/export';
 
-let segmenter = null;
-
 export default function BgRemovalModal() {
   const state = useAppState();
   const dispatch = useDispatch();
@@ -18,6 +16,7 @@ export default function BgRemovalModal() {
   const [fileName, setFileName] = useState('');
   const fileRef = useRef(null);
   const blobRef = useRef(null);
+  const moduleRef = useRef(null);
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
@@ -31,94 +30,128 @@ export default function BgRemovalModal() {
     blobRef.current = null;
   };
 
+  // Boost image contrast to help the model distinguish foreground from background
+  const boostContrast = (file) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+
+        // Draw original
+        ctx.drawImage(img, 0, 0);
+
+        // Increase brightness and contrast
+        ctx.filter = 'contrast(1.5) brightness(1.2)';
+        ctx.drawImage(canvas, 0, 0);
+        ctx.filter = 'none';
+
+        canvas.toBlob((blob) => resolve(blob), 'image/png');
+      };
+      img.src = URL.createObjectURL(file);
+    });
+  };
+
+  // Extract the alpha mask from the processed image
+  const extractMask = (processedBlob) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        resolve({ mask: imageData, width: canvas.width, height: canvas.height });
+      };
+      img.src = URL.createObjectURL(processedBlob);
+    });
+  };
+
+  // Apply mask from processed image onto original image
+  const applyMaskToOriginal = (originalFile, maskData) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const origData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+        // If sizes match, apply mask alpha directly
+        if (img.width === maskData.width && img.height === maskData.height) {
+          for (let i = 0; i < origData.data.length; i += 4) {
+            origData.data[i + 3] = maskData.mask.data[i + 3];
+          }
+        }
+
+        ctx.putImageData(origData, 0, 0);
+        canvas.toBlob((blob) => resolve(blob), 'image/png');
+      };
+      img.src = URL.createObjectURL(originalFile);
+    });
+  };
+
   const processRemoval = async () => {
     const file = fileRef.current?.files[0];
     if (!file) return;
 
     setProcessing(true);
     setProgressWidth('10%');
-    setStatusText('Loading AI model (first time ~45MB download)...');
+    setStatusText('Loading AI model...');
     setCanProcess(false);
 
     try {
-      if (!segmenter) {
-        const { AutoModel, AutoProcessor, RawImage, env } = await import('@huggingface/transformers');
-
-        env.allowLocalModels = false;
-        env.useBrowserCache = true;
-
-        setProgressWidth('20%');
-        setStatusText('Downloading model...');
-
-        const model = await AutoModel.from_pretrained('briaai/RMBG-1.4', {
-          quantized: true,
-        });
-        const processor = await AutoProcessor.from_pretrained('briaai/RMBG-1.4');
-
-        segmenter = { model, processor, RawImage };
+      if (!moduleRef.current) {
+        const mod = await import('@imgly/background-removal');
+        moduleRef.current = mod.removeBackground || mod.default;
       }
+      const removeBackground = moduleRef.current;
 
-      setProgressWidth('40%');
-      setStatusText('Processing image...');
+      setProgressWidth('20%');
+      setStatusText('Pre-processing image...');
 
-      const { model, processor, RawImage } = segmenter;
+      // Step 1: Create contrast-boosted version for better model detection
+      const boostedFile = await boostContrast(file);
 
-      // Load image
-      const imageUrl = URL.createObjectURL(file);
-      const image = await RawImage.fromURL(imageUrl);
+      setProgressWidth('30%');
+      setStatusText('Removing background (this may take a moment)...');
 
-      setProgressWidth('50%');
-
-      // Process through model
-      const { pixel_values } = await processor(image);
-      const { output } = await model({ input: pixel_values });
-
-      setProgressWidth('70%');
-      setStatusText('Generating mask...');
-
-      // Get mask and resize to original image dimensions
-      const maskData = output[0][0];
-      const maskImage = RawImage.fromTensor(maskData);
-      const resizedMask = await maskImage.resize(image.width, image.height);
+      // Step 2: Run BG removal on boosted image to get better mask
+      const processedBlob = await removeBackground(boostedFile, {
+        model: 'isnet_fp16',
+        output: { format: 'image/png', quality: 1 },
+        progress: (key, current, total) => {
+          if (total > 0) {
+            const pct = 30 + (current / total) * 50;
+            setProgressWidth(pct + '%');
+          }
+          setStatusText(`Processing: ${key}...`);
+        }
+      });
 
       setProgressWidth('85%');
-      setStatusText('Applying mask...');
+      setStatusText('Applying mask to original...');
 
-      // Create output canvas with transparency
-      const canvas = document.createElement('canvas');
-      canvas.width = image.width;
-      canvas.height = image.height;
-      const ctx = canvas.getContext('2d');
+      // Step 3: Extract mask from processed image and apply to original
+      const maskData = await extractMask(processedBlob);
+      const finalBlob = await applyMaskToOriginal(file, maskData);
 
-      // Draw original image
-      const imgEl = new Image();
-      await new Promise((resolve) => {
-        imgEl.onload = resolve;
-        imgEl.src = imageUrl;
-      });
-      ctx.drawImage(imgEl, 0, 0);
-
-      // Apply mask as alpha channel
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const pixels = imageData.data;
-      for (let i = 0; i < resizedMask.data.length; i++) {
-        pixels[i * 4 + 3] = resizedMask.data[i]; // Set alpha from mask
-      }
-      ctx.putImageData(imageData, 0, 0);
-
-      // Convert to blob
-      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-
-      blobRef.current = blob;
-      const resultUrl = URL.createObjectURL(blob);
-      setResultSrc(resultUrl);
+      blobRef.current = finalBlob;
+      const url = URL.createObjectURL(finalBlob);
+      setResultSrc(url);
       setCanAdd(true);
       setProgressWidth('100%');
       setStatusText('Done! Background removed.');
     } catch (err) {
       const msg = err.message || String(err);
       setStatusText('Error: ' + msg);
-      console.error('BG Removal Error:', err, err.stack);
+      console.error('BG Removal Error:', err);
       setCanProcess(true);
     }
     setProcessing(false);
@@ -152,7 +185,7 @@ export default function BgRemovalModal() {
           <div className="modal-content">
             <h2>Remove Background</h2>
             <p>Upload an image to remove its background (runs locally in browser, 100% free).</p>
-            <p className="note">First use downloads a ~45MB AI model (cached afterwards).</p>
+            <p className="note">First use downloads a ~40MB AI model (cached afterwards).</p>
             <input ref={fileRef} type="file" accept="image/*" onChange={handleFileChange} style={{ display: 'none' }} />
             <button className="btn-secondary" style={{ marginTop: 8 }} onClick={() => fileRef.current?.click()}>
               Choose Image...
