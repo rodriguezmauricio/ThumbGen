@@ -14,11 +14,13 @@ export default function BgRemovalModal() {
   const [statusText, setStatusText] = useState('');
   const [canProcess, setCanProcess] = useState(false);
   const [canAdd, setCanAdd] = useState(false);
+  const [fileName, setFileName] = useState('');
   const fileRef = useRef(null);
   const blobRef = useRef(null);
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    setFileName(file.name);
     const url = URL.createObjectURL(file);
     setOriginalSrc(url);
     setResultSrc('');
@@ -41,7 +43,7 @@ export default function BgRemovalModal() {
       setStatusText('Processing image...');
 
       const blob = await removeBackground(file, {
-        model: 'isnet',
+        model: 'isnet_fp16',
         output: { format: 'image/png', quality: 1 },
         progress: (key, current, total) => {
           if (total > 0) {
@@ -97,7 +99,11 @@ export default function BgRemovalModal() {
             <h2>Remove Background</h2>
             <p>Upload an image to remove its background (runs locally in browser, 100% free).</p>
             <p className="note">First use downloads a ~40MB AI model (cached afterwards).</p>
-            <input ref={fileRef} type="file" accept="image/*" onChange={handleFileChange} />
+            <input ref={fileRef} type="file" accept="image/*" onChange={handleFileChange} style={{ display: 'none' }} />
+            <button className="btn-secondary" style={{ marginTop: 8 }} onClick={() => fileRef.current?.click()}>
+              Choose Image...
+            </button>
+            {fileName && <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 8 }}>{fileName}</span>}
             <div className="preview-area">
               <div>
                 <h4>Original</h4>
