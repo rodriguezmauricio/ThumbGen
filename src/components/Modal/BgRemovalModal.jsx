@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { removeBackground } from '@imgly/background-removal';
 import { useAppState, useDispatch, newId } from '../../store/state';
 import { fitImageToCanvas } from '../../utils/export';
 
@@ -15,8 +16,6 @@ export default function BgRemovalModal() {
   const [canAdd, setCanAdd] = useState(false);
   const fileRef = useRef(null);
   const blobRef = useRef(null);
-  const moduleRef = useRef(null);
-
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -38,14 +37,10 @@ export default function BgRemovalModal() {
     setCanProcess(false);
 
     try {
-      if (!moduleRef.current) {
-        moduleRef.current = await import('https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.4.5/dist/index.js');
-      }
-
       setProgressWidth('30%');
       setStatusText('Processing image...');
 
-      const blob = await moduleRef.current.default(file, {
+      const blob = await removeBackground(file, {
         progress: (key, current, total) => {
           if (total > 0) {
             const pct = 30 + (current / total) * 60;
