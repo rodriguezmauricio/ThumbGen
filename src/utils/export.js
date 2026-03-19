@@ -47,16 +47,23 @@ export function saveProject(state) {
   const blob = new Blob([JSON.stringify(project)], { type: 'application/json' });
   const link = document.createElement('a');
   link.download = 'thumbnail_project.thumbgen';
-  link.href = URL.createObjectURL(blob);
+  const url = URL.createObjectURL(blob);
+  link.href = url;
   link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export function loadProject(file, callback) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = e => {
-    const project = JSON.parse(e.target.result);
-    callback(project);
+    try {
+      const project = JSON.parse(e.target.result);
+      callback(project);
+    } catch (err) {
+      console.error('Failed to parse project file:', err);
+      alert('Invalid project file. Could not parse JSON.');
+    }
   };
   reader.readAsText(file);
 }

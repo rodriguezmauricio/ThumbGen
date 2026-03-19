@@ -2,3 +2,8 @@ node_modules
 dist
 .env
 .env.local
+.agent/
+.agents/
+.claude/skills/qa-testing-strategy
+.claude/skills/ui-ux-pro-max
+skills-lock.json

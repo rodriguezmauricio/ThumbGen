@@ -7,6 +7,11 @@ export default function LayerBar() {
   return (
     <div className="layer-bar">
       <h4>Layers</h4>
+      {state.layers.length === 0 && (
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          No layers yet. Add text, images, or shapes from the sidebar.
+        </span>
+      )}
       <div id="layerList" style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
         {state.layers.map(layer => {
           const typeIcon = layer.type === 'text' ? 'T' : layer.type === 'image' ? '\uD83D\uDDBC' : '\u25C6';

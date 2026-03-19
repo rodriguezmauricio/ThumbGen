@@ -53,6 +53,7 @@ export function drawBgImage(c, w, h, bgImage) {
 }
 
 export function drawPattern(c, w, h, p) {
+  if (p.scale <= 0) return;
   c.save();
   c.globalAlpha = p.opacity / 100;
   c.fillStyle = p.fg;
@@ -324,16 +325,38 @@ export function renderToContext(c, w, h, stateOrTemplate, baseState) {
 }
 
 export function hitTest(layer, mx, my) {
+  let lx, ly, lw, lh;
   if (layer.type === 'text') {
     const size = layer.size;
     const lines = layer.text.split('\n');
-    const lh = size * (layer.lineHeight || 1.2);
-    const totalH = lh * lines.length;
+    const lineH = size * (layer.lineHeight || 1.2);
+    const totalH = lineH * lines.length;
     const maxW = Math.max(...lines.map(l => l.length)) * size * 0.6;
-    let lx = layer.x, ly = layer.y - totalH / 2;
+    lx = layer.x;
+    ly = layer.y - totalH / 2;
     if (layer.align === 'center') lx -= maxW / 2;
     else if (layer.align === 'right') lx -= maxW;
-    return mx >= lx && mx <= lx + maxW && my >= ly && my <= ly + totalH;
+    lw = maxW;
+    lh = totalH;
+  } else {
+    lx = layer.x;
+    ly = layer.y;
+    lw = layer.w || 100;
+    lh = layer.h || 100;
   }
-  return mx >= layer.x && mx <= layer.x + (layer.w || 100) && my >= layer.y && my <= layer.y + (layer.h || 100);
+
+  let testX = mx, testY = my;
+  if (layer.rotation) {
+    const cx = lx + lw / 2;
+    const cy = ly + lh / 2;
+    const angle = -(layer.rotation * Math.PI) / 180;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const dx = mx - cx;
+    const dy = my - cy;
+    testX = cos * dx - sin * dy + cx;
+    testY = sin * dx + cos * dy + cy;
+  }
+
+  return testX >= lx && testX <= lx + lw && testY >= ly && testY <= ly + lh;
 }

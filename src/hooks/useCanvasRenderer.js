@@ -22,14 +22,6 @@ export function useCanvasRenderer() {
     render();
   }, [render]);
 
-  // Set canvas size
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    canvas.width = state.width;
-    canvas.height = state.height;
-  }, [state.width, state.height]);
-
   // Zoom
   useEffect(() => {
     const canvas = canvasRef.current;

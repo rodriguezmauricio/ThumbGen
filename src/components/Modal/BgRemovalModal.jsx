@@ -22,6 +22,8 @@ export default function BgRemovalModal() {
     const file = e.target.files[0];
     if (!file) return;
     setFileName(file.name);
+    if (originalSrc) URL.revokeObjectURL(originalSrc);
+    if (resultSrc) URL.revokeObjectURL(resultSrc);
     setOriginalSrc(URL.createObjectURL(file));
     setResultSrc('');
     setCanProcess(true);
@@ -53,6 +55,7 @@ export default function BgRemovalModal() {
       });
 
       blobRef.current = blob;
+      if (resultSrc) URL.revokeObjectURL(resultSrc);
       setResultSrc(URL.createObjectURL(blob));
       setCanAdd(true);
       setProgressWidth('100%');
@@ -89,7 +92,7 @@ export default function BgRemovalModal() {
       </button>
 
       {visible && (
-        <div className="modal">
+        <div className="modal" onClick={(e) => { if (e.target === e.currentTarget) setVisible(false); }}>
           <div className="modal-content">
             <h2>Remove Background</h2>
             <p>Upload an image to remove its background (runs locally in browser, 100% free).</p>
@@ -120,7 +123,13 @@ export default function BgRemovalModal() {
                 {processing ? 'Processing...' : 'Remove Background'}
               </button>
               <button className="btn-primary" disabled={!canAdd} onClick={addToCanvas}>Add to Canvas</button>
-              <button className="btn-secondary" onClick={() => setVisible(false)}>Close</button>
+              <button className="btn-secondary" onClick={() => {
+                if (originalSrc) URL.revokeObjectURL(originalSrc);
+                if (resultSrc) URL.revokeObjectURL(resultSrc);
+                setOriginalSrc('');
+                setResultSrc('');
+                setVisible(false);
+              }}>Close</button>
             </div>
           </div>
         </div>

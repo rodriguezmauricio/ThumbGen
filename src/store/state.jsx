@@ -37,6 +37,7 @@ function createSnapshot(state) {
     gradient: state.gradient,
     pattern: state.pattern,
     effects: state.effects,
+    bgImage: { ...state.bgImage, img: state.bgImage.img ? '__BGIMG__' : null },
     layers: state.layers.map(l => ({ ...l, img: l.img ? '__IMG__' : undefined })),
   });
 }
@@ -49,12 +50,16 @@ function restoreFromSnapshot(state, snap) {
     if (l.img === '__IMG__') l.img = imgMap[l.id] || null;
     return l;
   });
+  const bgImage = parsed.bgImage
+    ? { ...parsed.bgImage, img: parsed.bgImage.img === '__BGIMG__' ? state.bgImage.img : null }
+    : state.bgImage;
   return {
     ...state,
     bg: parsed.bg,
     gradient: parsed.gradient,
     pattern: parsed.pattern,
     effects: parsed.effects,
+    bgImage,
     layers,
   };
 }
@@ -171,11 +176,13 @@ function reducer(state, action) {
         gradient = { ...t.gradient };
       }
       const layers = t.layers.map(l => ({ ...l, id: newId(), visible: true, locked: false }));
-      return { ...state, bg, gradient, layers };
+      return { ...state, bg, gradient, layers, selectedLayer: null };
     }
 
     case 'LOAD_PROJECT': {
       const p = action.payload;
+      const maxId = p.layers.reduce((max, l) => Math.max(max, l.id || 0), 0);
+      if (maxId >= layerIdCounter) layerIdCounter = maxId;
       return {
         ...state,
         width: p.width,

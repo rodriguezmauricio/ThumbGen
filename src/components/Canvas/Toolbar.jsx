@@ -43,13 +43,14 @@ export default function Toolbar() {
       const layers = project.layers.map(l => {
         if (l.imgData) {
           pending++;
+          const imgDataUrl = l.imgData;
+          delete l.imgData;
           const img = new Image();
           img.onload = () => {
-            l.img = img;
+            dispatch({ type: 'UPDATE_LAYER', payload: { id: l.id, updates: { img } } });
             tryFinish();
           };
-          img.src = l.imgData;
-          delete l.imgData;
+          img.src = imgDataUrl;
         }
         return l;
       });
