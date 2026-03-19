@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { removeBackground } from '@imgly/background-removal';
 import { useAppState, useDispatch } from '../../store/state';
 import { fitImageToCanvas } from '../../utils/export';
 
@@ -9,6 +10,7 @@ export default function BgRemovalModal() {
   const [originalSrc, setOriginalSrc] = useState('');
   const [resultSrc, setResultSrc] = useState('');
   const [processing, setProcessing] = useState(false);
+  const [progressWidth, setProgressWidth] = useState('0%');
   const [statusText, setStatusText] = useState('');
   const [canProcess, setCanProcess] = useState(false);
   const [canAdd, setCanAdd] = useState(false);
@@ -20,8 +22,7 @@ export default function BgRemovalModal() {
     const file = e.target.files[0];
     if (!file) return;
     setFileName(file.name);
-    const url = URL.createObjectURL(file);
-    setOriginalSrc(url);
+    setOriginalSrc(URL.createObjectURL(file));
     setResultSrc('');
     setCanProcess(true);
     setCanAdd(false);
@@ -29,47 +30,35 @@ export default function BgRemovalModal() {
     setStatusText('');
   };
 
-  const fileToBase64 = (file) => {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.readAsDataURL(file);
-    });
-  };
-
   const processRemoval = async () => {
     const file = fileRef.current?.files[0];
     if (!file) return;
 
     setProcessing(true);
-    setStatusText('Removing background...');
+    setProgressWidth('10%');
+    setStatusText('Loading AI model...');
     setCanProcess(false);
 
     try {
-      const base64 = await fileToBase64(file);
-
-      const response = await fetch('/api/remove-bg', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: base64 }),
+      const blob = await removeBackground(file, {
+        model: 'isnet_fp16',
+        output: { format: 'image/png', quality: 1 },
+        progress: (key, current, total) => {
+          if (total > 0) {
+            const pct = 10 + (current / total) * 85;
+            setProgressWidth(pct + '%');
+          }
+          setStatusText(`Processing: ${key}...`);
+        },
       });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to remove background');
-      }
-
-      // Convert base64 result to blob
-      const res = await fetch(data.result);
-      const blob = await res.blob();
-
       blobRef.current = blob;
-      setResultSrc(data.result);
+      setResultSrc(URL.createObjectURL(blob));
       setCanAdd(true);
+      setProgressWidth('100%');
       setStatusText('Done! Background removed.');
     } catch (err) {
-      setStatusText('Error: ' + err.message);
+      setStatusText('Error: ' + (err.message || String(err)));
       console.error('BG Removal Error:', err);
       setCanProcess(true);
     }
@@ -103,7 +92,8 @@ export default function BgRemovalModal() {
         <div className="modal">
           <div className="modal-content">
             <h2>Remove Background</h2>
-            <p>Upload an image to remove its background. Powered by Remove.bg.</p>
+            <p>Upload an image to remove its background (runs locally in browser, 100% free).</p>
+            <p className="note">First use downloads a ~40MB AI model (cached afterwards).</p>
             <input ref={fileRef} type="file" accept="image/*" onChange={handleFileChange} style={{ display: 'none' }} />
             <button className="btn-secondary" style={{ marginTop: 8 }} onClick={() => fileRef.current?.click()}>
               Choose Image...
@@ -121,7 +111,7 @@ export default function BgRemovalModal() {
             </div>
             {statusText && (
               <div className="progress-bar">
-                <div className="progress-fill" style={{ width: processing ? '60%' : '100%' }} />
+                <div className="progress-fill" style={{ width: progressWidth }} />
                 <span>{statusText}</span>
               </div>
             )}
